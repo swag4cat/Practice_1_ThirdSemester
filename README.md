@@ -25,20 +25,35 @@
 
 no_sql_dbms/
 ├── include/ # Заголовочные файлы
+
 │ ├── utils.hpp
+
 │ ├── hash_map.hpp
+
 │ ├── query_evaluator.hpp
+
 │ ├── btree_index.hpp
+
 │ └── collection.hpp
+
 ├── src/ # Реализация модулей
+
 │ ├── utils.cpp
+
 │ ├── query_evaluator.cpp
+
 │ ├── btree_index.cpp
+
 │ ├── collection.cpp
+
 │ └── main.cpp
+
 ├── parcer/json.hpp # nlohmann JSON-парсер
+
 ├── Makefile
+
 └── mydb/ # Пример базы данных (создаётся автоматически)
+
 
 ### Сборка
 
