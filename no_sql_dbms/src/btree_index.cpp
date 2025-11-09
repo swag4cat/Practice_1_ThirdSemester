@@ -1,0 +1,111 @@
+#include "../include/btree_index.hpp"
+
+BTreeNode::BTreeNode(bool isLeaf) : leaf(isLeaf) {}
+
+BTreeIndex::BTreeIndex(int t) : t(t), root(std::make_shared<BTreeNode>(true)) {}
+
+void BTreeIndex::splitChild(std::shared_ptr<BTreeNode> x, int i, std::shared_ptr<BTreeNode> y) {
+    auto z = std::make_shared<BTreeNode>(y->leaf);
+    for (int j = 0; j < t - 1; j++) {
+        z->keys.push_back(y->keys[j + t]);
+        z->ids.push_back(y->ids[j + t]);
+    }
+    if (!y->leaf) {
+        for (int j = 0; j < t; j++) z->children.push_back(y->children[j + t]);
+    }
+    y->keys.resize(t - 1);
+    y->ids.resize(t - 1);
+    if (!y->leaf) y->children.resize(t);
+    x->children.insert(x->children.begin() + i + 1, z);
+    x->keys.insert(x->keys.begin() + i, y->keys[t - 1]);
+    x->ids.insert(x->ids.begin() + i, y->ids[t - 1]);
+}
+
+void BTreeIndex::insertNonFull(std::shared_ptr<BTreeNode> x, double k, const std::string &id) {
+    int i = (int)x->keys.size() - 1;
+    if (x->leaf) {
+        while (i >= 0 && k < x->keys[i]) i--;
+        if (i >= 0 && x->keys[i] == k) {
+            x->ids[i].push_back(id);
+            return;
+        }
+        x->keys.insert(x->keys.begin() + i + 1, k);
+        x->ids.insert(x->ids.begin() + i + 1, std::vector<std::string>{id});
+    } else {
+        while (i >= 0 && k < x->keys[i]) i--;
+        i++;
+        if ((int)x->children[i]->keys.size() == 2*t - 1) {
+            splitChild(x, i, x->children[i]);
+            if (k > x->keys[i]) i++;
+        }
+        insertNonFull(x->children[i], k, id);
+    }
+}
+
+void BTreeIndex::insert(double key, const std::string &id) {
+    if ((int)root->keys.size() == 2*t - 1) {
+        auto s = std::make_shared<BTreeNode>(false);
+        s->children.push_back(root);
+        splitChild(s, 0, root);
+        root = s;
+    }
+    insertNonFull(root, key, id);
+}
+
+std::vector<std::string> BTreeIndex::searchNode(std::shared_ptr<BTreeNode> x, double k) const {
+    int i = 0;
+    while (i < (int)x->keys.size() && k > x->keys[i]) i++;
+    if (i < (int)x->keys.size() && k == x->keys[i]) return x->ids[i];
+    if (x->leaf) return {};
+    return searchNode(x->children[i], k);
+}
+
+std::vector<std::string> BTreeIndex::search(double key) const {
+    return searchNode(root, key);
+}
+
+void BTreeIndex::rangeSearchNode(std::shared_ptr<BTreeNode> x, double low, double high, bool includeLow, bool includeHigh, std::vector<std::string> &result) const {
+    int i;
+    for (i = 0; i < (int)x->keys.size(); i++) {
+        if (!x->leaf) rangeSearchNode(x->children[i], low, high, includeLow, includeHigh, result);
+        double k = x->keys[i];
+        bool inRange = (k > low || (includeLow && k == low)) && (k < high || (includeHigh && k == high));
+        if (inRange) result.insert(result.end(), x->ids[i].begin(), x->ids[i].end());
+    }
+    if (!x->leaf) rangeSearchNode(x->children[i], low, high, includeLow, includeHigh, result);
+}
+
+std::vector<std::string> BTreeIndex::rangeSearch(double low, double high, bool includeLow, bool includeHigh) const {
+    std::vector<std::string> result;
+    rangeSearchNode(root, low, high, includeLow, includeHigh, result);
+    return result;
+}
+
+json BTreeIndex::to_json(std::shared_ptr<BTreeNode> node) const {
+    if (!node) node = root;
+    json j;
+    j["leaf"] = node->leaf;
+    j["keys"] = node->keys;
+    j["ids"] = node->ids;
+    if (!node->leaf) {
+        j["children"] = json::array();
+        for (auto &ch : node->children) j["children"].push_back(to_json(ch));
+    }
+    return j;
+}
+
+std::shared_ptr<BTreeNode> BTreeIndex::load_node(const json &j) const {
+    auto node = std::make_shared<BTreeNode>(j["leaf"]);
+    node->keys = j["keys"].get<std::vector<double>>();
+    node->ids = j["ids"].get<std::vector<std::vector<std::string>>>();
+    if (!node->leaf) {
+        for (auto &child : j["children"]) {
+            node->children.push_back(load_node(child));
+        }
+    }
+    return node;
+}
+
+void BTreeIndex::from_json(const json &j) {
+    root = load_node(j);
+}
