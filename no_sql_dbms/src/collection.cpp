@@ -1,9 +1,9 @@
 #include "../include/collection.hpp"
 #include "../include/utils.hpp"
+#include "../include/algorithms.hpp"
 #include <fstream>
 #include <iostream>
 #include <filesystem>
-#include <algorithm>
 
 Collection::Collection(const std::string &db_path, const std::string &name)
 : dbpath(db_path), collname(name) {
@@ -22,35 +22,44 @@ std::string Collection::insert(json doc) {
     doc["_id"] = id;
     store.put(id, doc);
 
-    for (auto &p : indexes) {
-        const std::string &field = p.first;
+    auto index_items = indexes.items();
+    for (const auto& item : index_items) {
+        const std::string& field = item.first;
         if (doc.contains(field)) {
             std::string key = index_key_for_value(doc[field]);
-            p.second[key].push_back(id);
+            HashMap<Vector<std::string>> field_index = item.second;
+            Vector<std::string> ids;
+            field_index.get(key, ids);
+            ids.push_back(id);
+            field_index.put(key, ids);
+            indexes.put(field, field_index);
         }
     }
 
-    for (auto &p : btree_indexes) {
-        const std::string &field = p.first;
+    auto btree_items = btree_indexes.items();
+    for (const auto& item : btree_items) {
+        const std::string& field = item.first;
         if (doc.contains(field) && doc[field].is_number()) {
-            p.second.insert(doc[field].get<double>(), id);
+            BTreeIndex bt = item.second;
+            bt.insert(doc[field].get<double>(), id);
+            btree_indexes.put(field, bt);
         }
     }
 
     return id;
 }
 
-std::vector<json> Collection::find(const json &query) {
-    std::vector<json> res;
+Vector<json> Collection::find(const json &query) {
+    Vector<json> res;
 
     if (query.is_object() && query.size() == 1 && !query.contains("$or")) {
         auto it = query.begin();
         std::string field = it.key();
         const json &cond = it.value();
 
-        if (btree_indexes.count(field) && cond.is_object()) {
-            auto &bt = btree_indexes[field];
-            std::vector<std::string> ids;
+        BTreeIndex bt;
+        if (btree_indexes.get(field, bt) && cond.is_object()) {
+            Vector<std::string> ids;
 
             if (cond.contains("$eq"))
                 ids = bt.search(cond["$eq"].get<double>());
@@ -77,20 +86,22 @@ std::vector<json> Collection::find(const json &query) {
         std::string field = it.key();
         const json &cond = it.value();
 
-        if (indexes.count(field)) {
-            auto &mapidx = indexes[field];
+        HashMap<Vector<std::string>> field_index;
+        if (indexes.get(field, field_index)) {
             if (!cond.is_object()) {
                 std::string key = index_key_for_value(cond);
-                if (mapidx.count(key)) {
-                    for (auto &id : mapidx[key]) {
+                Vector<std::string> ids;
+                if (field_index.get(key, ids)) {
+                    for (auto &id : ids) {
                         json d; if (store.get(id, d)) res.push_back(d);
                     }
                     usedIndex = true;
                 }
             } else if (cond.contains("$eq")) {
                 std::string key = index_key_for_value(cond["$eq"]);
-                if (mapidx.count(key)) {
-                    for (auto &id : mapidx[key]) {
+                Vector<std::string> ids;
+                if (field_index.get(key, ids)) {
+                    for (auto &id : ids) {
                         json d; if (store.get(id, d)) res.push_back(d);
                     }
                     usedIndex = true;
@@ -98,8 +109,9 @@ std::vector<json> Collection::find(const json &query) {
             } else if (cond.contains("$in")) {
                 for (const auto &v : cond["$in"]) {
                     std::string key = index_key_for_value(v);
-                    if (mapidx.count(key)) {
-                        for (auto &id : mapidx[key]) {
+                    Vector<std::string> ids;
+                    if (field_index.get(key, ids)) {
+                        for (auto &id : ids) {
                             json d; if (store.get(id, d)) res.push_back(d);
                         }
                     }
@@ -110,7 +122,8 @@ std::vector<json> Collection::find(const json &query) {
     }
 
     if (!usedIndex) {
-        for (auto &p : store.items()) {
+        auto all_items = store.items();
+        for (auto &p : all_items) {
             if (evaluate_query(p.second, query))
                 res.push_back(p.second);
         }
@@ -126,22 +139,42 @@ int Collection::remove(const json &query) {
         std::string id = d["_id"].get<std::string>();
         if (store.remove(id)) {
             ++cnt;
-            for (auto &p : indexes) {
-                const std::string &field = p.first;
+            auto index_items = indexes.items();
+            for (const auto& item : index_items) {
+                const std::string& field = item.first;
                 if (d.contains(field)) {
                     std::string key = index_key_for_value(d[field]);
-                    auto &vec = p.second[key];
-                    vec.erase(std::remove(vec.begin(), vec.end(), id), vec.end());
+                    HashMap<Vector<std::string>> field_index = item.second;
+                    Vector<std::string> ids;
+                    if (field_index.get(key, ids)) {
+                        size_t removed = custom_remove_if(ids.begin(), ids.end(),
+                                                          [&](const std::string& current_id) { return current_id == id; });
+                        if (removed > 0) {
+                            ids.resize(ids.size() - removed);
+                            if (ids.empty()) {
+                                field_index.remove(key);
+                            } else {
+                                field_index.put(key, ids);
+                            }
+                            indexes.put(field, field_index);
+                        }
+                    }
                 }
             }
         }
     }
+
+    if (cnt > 0) {
+        save();
+    }
+
     return cnt;
 }
 
 void Collection::create_index(const std::string &field) {
     bool numericField = false;
-    for (auto &p : store.items()) {
+    auto all_items = store.items();
+    for (auto &p : all_items) {
         const json &doc = p.second;
         if (doc.contains(field) && doc[field].is_number()) {
             numericField = true;
@@ -151,27 +184,30 @@ void Collection::create_index(const std::string &field) {
 
     if (numericField) {
         BTreeIndex btree;
-        for (auto &p : store.items()) {
+        for (auto &p : all_items) {
             const json &doc = p.second;
             if (doc.contains(field) && doc[field].is_number())
                 btree.insert(doc[field].get<double>(), p.first);
         }
-        btree_indexes[field] = btree;
+        btree_indexes.put(field, btree);
 
         std::string fname = indexdir + "/" + collname + "." + field + ".btree.json";
         std::ofstream ofs(fname);
         ofs << std::setw(2) << btree.to_json() << std::endl;
         std::cout << "B-Tree index created on numeric field '" << field << "'.\n";
     } else {
-        std::unordered_map<std::string, std::vector<std::string>> mapidx;
-        for (auto &p : store.items()) {
+        HashMap<Vector<std::string>> mapidx;
+        for (auto &p : all_items) {
             const json &doc = p.second;
             if (doc.contains(field)) {
                 std::string key = index_key_for_value(doc[field]);
-                mapidx[key].push_back(p.first);
+                Vector<std::string> ids;
+                mapidx.get(key, ids);
+                ids.push_back(p.first);
+                mapidx.put(key, ids);
             }
         }
-        indexes[field] = mapidx;
+        indexes.put(field, mapidx);
         save_index(field);
         std::cout << "Simple index created on field '" << field << "'.\n";
     }
@@ -181,7 +217,19 @@ void Collection::save() {
     json j = store.to_json();
     std::ofstream ofs(collfile);
     ofs << std::setw(2) << j << std::endl;
-    for (auto &p : indexes) save_index(p.first);
+
+    auto index_items = indexes.items();
+    for (const auto& item : index_items) {
+        save_index(item.first);
+    }
+}
+
+Vector<std::string> json_to_string_vector(const json& j) {
+    Vector<std::string> result;
+    for (const auto& item : j) {
+        result.push_back(item.get<std::string>());
+    }
+    return result;
 }
 
 void Collection::load() {
@@ -200,16 +248,17 @@ void Collection::load() {
             std::string field = fname.substr(prefix.size(), fname.find(".index.json") - prefix.size());
             std::ifstream fi(p.path());
             json ji; fi >> ji;
-            std::unordered_map<std::string, std::vector<std::string>> mapidx;
-            for (auto it = ji.begin(); it != ji.end(); ++it)
-                mapidx[it.key()] = it.value().get<std::vector<std::string>>();
-            indexes[field] = mapidx;
+            HashMap<Vector<std::string>> mapidx;
+            for (auto it = ji.begin(); it != ji.end(); ++it) {
+                mapidx.put(it.key(), json_to_string_vector(it.value()));
+            }
+            indexes.put(field, mapidx);
         } else if (fname.find(".btree.json") != std::string::npos) {
             std::string field = fname.substr(prefix.size(), fname.find(".btree.json") - prefix.size());
             std::ifstream fi(p.path());
             json jb; fi >> jb;
             BTreeIndex bt; bt.from_json(jb);
-            btree_indexes[field] = bt;
+            btree_indexes.put(field, bt);
         }
     }
 }
@@ -225,9 +274,15 @@ std::string Collection::index_key_for_value(const json &v) {
 }
 
 void Collection::save_index(const std::string &field) {
+    HashMap<Vector<std::string>> field_index;
+    if (!indexes.get(field, field_index)) return;
+
     std::string fname = indexdir + "/" + collname + "." + field + ".index.json";
     json ji;
-    for (auto &p : indexes[field]) ji[p.first] = p.second;
+    auto items = field_index.items();
+    for (auto &p : items) {
+        ji[p.first] = p.second;
+    }
     std::ofstream ofs(fname);
     ofs << std::setw(2) << ji << std::endl;
 }

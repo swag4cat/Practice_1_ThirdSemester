@@ -1,8 +1,9 @@
 #pragma once
 #include <string>
-#include <vector>
+#include "vector.hpp"
 #include <utility>
 #include "../parcer/json.hpp"
+#include "algorithms.hpp"
 
 using json = nlohmann::json;
 
@@ -15,13 +16,13 @@ public:
     void put(const std::string &key, const V &value);
     bool get(const std::string &key, V &out) const;
     bool remove(const std::string &key);
-    std::vector<Pair> items() const;
+    Vector<Pair> items() const;
     size_t size() const;
     json to_json() const;
     void from_json(const json &j);
 
 private:
-    std::vector<std::vector<Pair>> buckets;
+    Vector<Vector<Pair>> buckets;
     size_t size_;
     double max_load_factor;
 
@@ -32,12 +33,14 @@ private:
 
 template<typename V>
 HashMap<V>::HashMap(size_t init_buckets, double max_load)
-: buckets(init_buckets), size_(0), max_load_factor(max_load) {}
+: size_(0), max_load_factor(max_load) {
+    buckets = Vector<Vector<Pair>>(init_buckets);
+}
 
 template<typename V>
 void HashMap<V>::put(const std::string &key, const V &value) {
-    if ((double)(size_ + 1) / buckets.size() > max_load_factor) {
-        rehash(buckets.size() * 2);
+    if (buckets.size() == 0 || (double)(size_ + 1) / buckets.size() > max_load_factor) {
+        rehash(buckets.size() == 0 ? 16 : buckets.size() * 2);
     }
     size_t idx = bucket_index(key);
     for (auto &p : buckets[idx]) {
@@ -49,6 +52,7 @@ void HashMap<V>::put(const std::string &key, const V &value) {
 
 template<typename V>
 bool HashMap<V>::get(const std::string &key, V &out) const {
+    if (buckets.size() == 0) return false;
     size_t idx = bucket_index(key);
     for (const auto &p : buckets[idx]) {
         if (p.first == key) { out = p.second; return true; }
@@ -58,21 +62,31 @@ bool HashMap<V>::get(const std::string &key, V &out) const {
 
 template<typename V>
 bool HashMap<V>::remove(const std::string &key) {
+    if (buckets.size() == 0) return false;
     size_t idx = bucket_index(key);
     auto &chain = buckets[idx];
-    for (auto it = chain.begin(); it != chain.end(); ++it) {
-        if (it->first == key) {
-            chain.erase(it);
+
+    // Manual removal to avoid iterator issues
+    bool found = false;
+    for (size_t i = 0; i < chain.size(); ++i) {
+        if (chain[i].first == key) {
+            // Shift all elements after i one position left
+            for (size_t j = i; j < chain.size() - 1; ++j) {
+                chain[j] = chain[j + 1];
+            }
+            chain.pop_back();
             --size_;
-            return true;
+            found = true;
+            break;
         }
     }
-    return false;
+
+    return found;
 }
 
 template<typename V>
-std::vector<typename HashMap<V>::Pair> HashMap<V>::items() const {
-    std::vector<Pair> res; res.reserve(size_);
+Vector<typename HashMap<V>::Pair> HashMap<V>::items() const {
+    Vector<Pair> res;
     for (const auto &chain : buckets) {
         for (const auto &p : chain) res.push_back(p);
     }
@@ -96,7 +110,7 @@ json HashMap<V>::to_json() const {
 template<typename V>
 void HashMap<V>::from_json(const json &j) {
     buckets.clear();
-    buckets.resize(16);
+    buckets = Vector<Vector<Pair>>(16);
     size_ = 0;
     for (auto it = j.begin(); it != j.end(); ++it) {
         put(it.key(), it.value());
@@ -118,12 +132,13 @@ uint64_t HashMap<V>::str_hash(const std::string &s) {
 
 template<typename V>
 size_t HashMap<V>::bucket_index(const std::string &key) const {
+    if (buckets.size() == 0) return 0;
     return (size_t)(str_hash(key) % buckets.size());
 }
 
 template<typename V>
 void HashMap<V>::rehash(size_t new_buckets) {
-    std::vector<std::vector<Pair>> new_table(new_buckets);
+    Vector<Vector<Pair>> new_table(new_buckets);
     for (const auto &chain : buckets) {
         for (const auto &p : chain) {
             uint64_t h = str_hash(p.first);
@@ -131,5 +146,5 @@ void HashMap<V>::rehash(size_t new_buckets) {
             new_table[idx].push_back(p);
         }
     }
-    buckets.swap(new_table);
+    buckets = new_table;
 }

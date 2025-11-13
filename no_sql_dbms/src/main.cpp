@@ -2,7 +2,7 @@
 #include <iostream>
 #include <iomanip>
 
-void print_json_array(const std::vector<json>& v) {
+void print_json_array(const Vector<json>& v) {
     json out = json::array();
     for (auto &d : v) out.push_back(d);
     std::cout << std::setw(2) << out << std::endl;

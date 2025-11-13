@@ -1,4 +1,5 @@
 #include "../include/btree_index.hpp"
+#include <iostream>
 
 BTreeNode::BTreeNode(bool isLeaf) : leaf(isLeaf) {}
 
@@ -16,9 +17,10 @@ void BTreeIndex::splitChild(std::shared_ptr<BTreeNode> x, int i, std::shared_ptr
     y->keys.resize(t - 1);
     y->ids.resize(t - 1);
     if (!y->leaf) y->children.resize(t);
-    x->children.insert(x->children.begin() + i + 1, z);
-    x->keys.insert(x->keys.begin() + i, y->keys[t - 1]);
-    x->ids.insert(x->ids.begin() + i, y->ids[t - 1]);
+
+    x->children.insert(i + 1, z);
+    x->keys.insert(i, y->keys[t - 1]);
+    x->ids.insert(i, y->ids[t - 1]);
 }
 
 void BTreeIndex::insertNonFull(std::shared_ptr<BTreeNode> x, double k, const std::string &id) {
@@ -29,8 +31,11 @@ void BTreeIndex::insertNonFull(std::shared_ptr<BTreeNode> x, double k, const std
             x->ids[i].push_back(id);
             return;
         }
-        x->keys.insert(x->keys.begin() + i + 1, k);
-        x->ids.insert(x->ids.begin() + i + 1, std::vector<std::string>{id});
+
+        x->keys.insert(i + 1, k);
+        Vector<std::string> new_id_vec;
+        new_id_vec.push_back(id);
+        x->ids.insert(i + 1, new_id_vec);
     } else {
         while (i >= 0 && k < x->keys[i]) i--;
         i++;
@@ -52,31 +57,35 @@ void BTreeIndex::insert(double key, const std::string &id) {
     insertNonFull(root, key, id);
 }
 
-std::vector<std::string> BTreeIndex::searchNode(std::shared_ptr<BTreeNode> x, double k) const {
+Vector<std::string> BTreeIndex::searchNode(std::shared_ptr<BTreeNode> x, double k) const {
     int i = 0;
     while (i < (int)x->keys.size() && k > x->keys[i]) i++;
     if (i < (int)x->keys.size() && k == x->keys[i]) return x->ids[i];
-    if (x->leaf) return {};
+    if (x->leaf) return Vector<std::string>();
     return searchNode(x->children[i], k);
 }
 
-std::vector<std::string> BTreeIndex::search(double key) const {
+Vector<std::string> BTreeIndex::search(double key) const {
     return searchNode(root, key);
 }
 
-void BTreeIndex::rangeSearchNode(std::shared_ptr<BTreeNode> x, double low, double high, bool includeLow, bool includeHigh, std::vector<std::string> &result) const {
+void BTreeIndex::rangeSearchNode(std::shared_ptr<BTreeNode> x, double low, double high, bool includeLow, bool includeHigh, Vector<std::string> &result) const {
     int i;
     for (i = 0; i < (int)x->keys.size(); i++) {
         if (!x->leaf) rangeSearchNode(x->children[i], low, high, includeLow, includeHigh, result);
         double k = x->keys[i];
         bool inRange = (k > low || (includeLow && k == low)) && (k < high || (includeHigh && k == high));
-        if (inRange) result.insert(result.end(), x->ids[i].begin(), x->ids[i].end());
+        if (inRange) {
+            for (const auto& id : x->ids[i]) {
+                result.push_back(id);
+            }
+        }
     }
     if (!x->leaf) rangeSearchNode(x->children[i], low, high, includeLow, includeHigh, result);
 }
 
-std::vector<std::string> BTreeIndex::rangeSearch(double low, double high, bool includeLow, bool includeHigh) const {
-    std::vector<std::string> result;
+Vector<std::string> BTreeIndex::rangeSearch(double low, double high, bool includeLow, bool includeHigh) const {
+    Vector<std::string> result;
     rangeSearchNode(root, low, high, includeLow, includeHigh, result);
     return result;
 }
@@ -94,10 +103,26 @@ json BTreeIndex::to_json(std::shared_ptr<BTreeNode> node) const {
     return j;
 }
 
+template<typename T>
+Vector<T> json_to_vector(const json& j) {
+    Vector<T> result;
+    for (const auto& item : j) {
+        result.push_back(item.get<T>());
+    }
+    return result;
+}
+
 std::shared_ptr<BTreeNode> BTreeIndex::load_node(const json &j) const {
     auto node = std::make_shared<BTreeNode>(j["leaf"]);
-    node->keys = j["keys"].get<std::vector<double>>();
-    node->ids = j["ids"].get<std::vector<std::vector<std::string>>>();
+
+    node->keys = json_to_vector<double>(j["keys"]);
+
+    Vector<Vector<std::string>> ids_vec;
+    for (const auto& id_array : j["ids"]) {
+        ids_vec.push_back(json_to_vector<std::string>(id_array));
+    }
+    node->ids = ids_vec;
+
     if (!node->leaf) {
         for (auto &child : j["children"]) {
             node->children.push_back(load_node(child));
