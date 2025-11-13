@@ -23,39 +23,29 @@
 
 ## Архитектура проекта
 
+```text
 no_sql_dbms/
-
-├── include/ # Заголовочные файлы
-
+├── include/         # Заголовочные файлы
 │ ├── utils.hpp
-
+│ ├── vector.hpp
+│ ├── algorithms.hpp
 │ ├── hash_map.hpp
-
 │ ├── query_evaluator.hpp
-
 │ ├── btree_index.hpp
-
 │ └── collection.hpp
-
-├── src/ # Реализация модулей
-
+├── src/             # Реализация модулей
 │ ├── utils.cpp
-
 │ ├── query_evaluator.cpp
-
 │ ├── btree_index.cpp
-
 │ ├── collection.cpp
-
 │ └── main.cpp
-
 ├── parcer/json.hpp # nlohmann JSON-парсер
-
 ├── Makefile
+└── mydb/           # Пример базы данных (создаётся автоматически)
+```
 
-└── mydb/ # Пример базы данных (создаётся автоматически)
-
+---
 
 ### Сборка
 
-Выполнить в корне проекта: `make`
+Выполнить в корне проекта: ```make```
