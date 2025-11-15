@@ -66,11 +66,9 @@ bool HashMap<V>::remove(const std::string &key) {
     size_t idx = bucket_index(key);
     auto &chain = buckets[idx];
 
-    // Manual removal to avoid iterator issues
     bool found = false;
     for (size_t i = 0; i < chain.size(); ++i) {
         if (chain[i].first == key) {
-            // Shift all elements after i one position left
             for (size_t j = i; j < chain.size() - 1; ++j) {
                 chain[j] = chain[j + 1];
             }

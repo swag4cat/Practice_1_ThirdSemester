@@ -46,7 +46,6 @@ size_t custom_remove_if(Iterator first, Iterator last, Predicate pred) {
 
 template<typename T>
 void custom_sort(Vector<T>& vec) {
-    // Simple bubble sort
     for (size_t i = 0; i < vec.size(); ++i) {
         for (size_t j = 0; j < vec.size() - i - 1; ++j) {
             if (vec[j] > vec[j + 1]) {
